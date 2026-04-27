@@ -1,0 +1,67 @@
+---
+# Playbook: Desplegar Suricata IDS
+# Este playbook lo completa HAMZA con sus reglas y configuración
+# Uso: ansible-playbook -i inventory/hosts.yml playbooks/07-suricata.yml
+#
+# INSTRUCCIONES PARA HAMZA:
+# 1. Sube tu suricata.yaml a: configs/suricata/suricata.yaml
+# 2. Sube reglas adicionales a: configs/suricata/rules/
+# 3. Avisa a Unai
+
+- name: Desplegar Suricata IDS
+  hosts: ids_servers
+  become: yes
+
+  vars:
+    suricata_iface: eth0   # Ajustar según la interfaz en TFG1
+
+  tasks:
+    - name: Instalar Suricata
+      apt:
+        name:
+          - suricata
+          - suricata-update
+        state: present
+        update_cache: yes
+
+    - name: Actualizar reglas de Suricata
+      command: suricata-update
+      register: suricata_update
+      changed_when: "'Fetching' in suricata_update.stdout"
+
+    - name: Copiar configuración personalizada de Suricata
+      copy:
+        src: ../../configs/suricata/suricata.yaml
+        dest: /etc/suricata/suricata.yaml
+        mode: '0644'
+        backup: yes
+      notify: Reiniciar Suricata
+
+    # Descomenta cuando Hamza tenga reglas locales:
+    # - name: Copiar reglas locales de Suricata
+    #   copy:
+    #     src: ../../configs/suricata/rules/
+    #     dest: /etc/suricata/rules/
+    #     mode: '0644'
+    #   notify: Reiniciar Suricata
+
+    - name: Habilitar y arrancar Suricata
+      service:
+        name: suricata
+        state: started
+        enabled: yes
+
+    - name: Verificar Suricata
+      command: suricata --build-info
+      register: suricata_info
+      changed_when: false
+
+    - name: Mostrar versión de Suricata
+      debug:
+        msg: "{{ suricata_info.stdout_lines[0] }}"
+
+  handlers:
+    - name: Reiniciar Suricata
+      service:
+        name: suricata
+        state: restarted

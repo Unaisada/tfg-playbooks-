@@ -1,0 +1,86 @@
+---
+# Playbook: Configuración base para todas las VMs Linux
+# Uso: ansible-playbook -i inventory/hosts.yml playbooks/00-base.yml
+
+- name: Configuración base de todos los servidores
+  hosts: linux_servers
+  become: yes
+
+  tasks:
+    - name: Actualizar repositorios apt
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Instalar paquetes básicos
+      apt:
+        name:
+          - vim
+          - htop
+          - curl
+          - wget
+          - git
+          - net-tools
+          - dnsutils
+          - tree
+          - unzip
+          - software-properties-common
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - lsb-release
+          - rsync
+          - jq
+        state: present
+
+    - name: Configurar timezone Europe/Madrid
+      timezone:
+        name: Europe/Madrid
+
+    - name: Configurar hostname
+      hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: Añadir entradas a /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ item }}"
+        state: present
+      loop:
+        - "10.0.100.1  fw-pfsense"
+        - "10.0.100.10 srv-linux"
+        - "10.0.100.20 srv-wazuh"
+        - "10.0.100.30 srv-monitoring"
+        - "10.0.100.40 srv-suricata"
+        - "10.0.100.50 srv-windows"
+
+    - name: Habilitar UFW y política deny-incoming por defecto
+      ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+
+    - name: Permitir SSH
+      ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+
+    - name: Deshabilitar login de root por SSH
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+      notify: Reiniciar SSH
+
+    - name: Configurar sudoers sin password para admin
+      copy:
+        dest: /etc/sudoers.d/admin
+        content: "admin ALL=(ALL) NOPASSWD:ALL\n"
+        mode: '0440'
+
+  handlers:
+    - name: Reiniciar SSH
+      service:
+        name: ssh
+        state: restarted

@@ -1,0 +1,70 @@
+---
+# Playbook: Desplegar Grafana + Prometheus + Loki (NOC)
+# Este playbook lo completa IKER con su docker-compose.yml
+# Uso: ansible-playbook -i inventory/hosts.yml playbooks/06-monitoring.yml
+#
+# INSTRUCCIONES PARA IKER:
+# 1. Sube tu docker-compose.yml a: configs/grafana/docker-compose.yml
+# 2. Sube prometheus.yml y dashboards a: configs/grafana/
+# 3. Avisa a Unai para descomentar tareas adicionales
+
+- name: Desplegar stack de Monitoring (Grafana + Prometheus + Loki)
+  hosts: monitoring_servers
+  become: yes
+
+  vars:
+    monitoring_dir: /opt/monitoring
+    grafana_puerto: 3000
+    prometheus_puerto: 9090
+    loki_puerto: 3100
+
+  tasks:
+    - name: Crear directorio de monitoring
+      file:
+        path: "{{ monitoring_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Copiar docker-compose.yml del stack de monitoring
+      copy:
+        src: ../../configs/grafana/docker-compose.yml
+        dest: "{{ monitoring_dir }}/docker-compose.yml"
+        mode: '0644'
+
+    # Descomenta cuando Iker tenga las configs:
+    # - name: Copiar prometheus.yml
+    #   copy:
+    #     src: ../../configs/grafana/prometheus.yml
+    #     dest: "{{ monitoring_dir }}/prometheus.yml"
+    #     mode: '0644'
+    #
+    # - name: Copiar dashboards de Grafana
+    #   copy:
+    #     src: ../../configs/grafana/dashboards/
+    #     dest: "{{ monitoring_dir }}/dashboards/"
+    #     mode: '0644'
+
+    - name: Arrancar stack de monitoring con Docker Compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ monitoring_dir }}"
+        state: present
+        pull: always
+
+    - name: Permitir puertos de monitoring en UFW
+      ufw:
+        rule: allow
+        port: "{{ item | string }}"
+      loop:
+        - "{{ grafana_puerto }}"
+        - "{{ prometheus_puerto }}"
+        - "{{ loki_puerto }}"
+        - 9100   # node_exporter
+
+    - name: Verificar contenedores de monitoring
+      command: docker compose -f {{ monitoring_dir }}/docker-compose.yml ps
+      register: monitoring_ps
+      changed_when: false
+
+    - name: Mostrar estado del stack
+      debug:
+        msg: "{{ monitoring_ps.stdout_lines }}"

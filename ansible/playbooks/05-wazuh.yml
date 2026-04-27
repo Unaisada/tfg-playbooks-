@@ -1,0 +1,65 @@
+---
+# Playbook: Desplegar Wazuh SIEM (Docker)
+# Este playbook lo completa HAMZA con su docker-compose.yml
+# Uso: ansible-playbook -i inventory/hosts.yml playbooks/05-wazuh.yml
+#
+# INSTRUCCIONES PARA HAMZA:
+# 1. Sube tu docker-compose.yml a: configs/wazuh/docker-compose.yml
+# 2. Sube cualquier config adicional a: configs/wazuh/
+# 3. Avisa a Unai para que descomentar las tareas de abajo
+
+- name: Desplegar Wazuh SIEM
+  hosts: siem_servers
+  become: yes
+
+  vars:
+    wazuh_dir: /opt/wazuh
+    wazuh_puerto_dashboard: 443
+    wazuh_puerto_indexer: 9200
+    wazuh_puerto_manager: 1514
+
+  tasks:
+    - name: Crear directorio de Wazuh
+      file:
+        path: "{{ wazuh_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Copiar docker-compose.yml de Wazuh
+      copy:
+        src: ../../configs/wazuh/docker-compose.yml
+        dest: "{{ wazuh_dir }}/docker-compose.yml"
+        mode: '0644'
+
+    # Descomenta cuando Hamza tenga configs adicionales:
+    # - name: Copiar configuraciones adicionales de Wazuh
+    #   copy:
+    #     src: ../../configs/wazuh/
+    #     dest: "{{ wazuh_dir }}/"
+    #     mode: '0644'
+
+    - name: Arrancar Wazuh con Docker Compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ wazuh_dir }}"
+        state: present
+        pull: always
+
+    - name: Permitir puertos de Wazuh en UFW
+      ufw:
+        rule: allow
+        port: "{{ item | string }}"
+      loop:
+        - "{{ wazuh_puerto_dashboard }}"
+        - "{{ wazuh_puerto_indexer }}"
+        - "{{ wazuh_puerto_manager }}"
+        - 1515
+        - 55000
+
+    - name: Verificar contenedores Wazuh
+      command: docker compose -f {{ wazuh_dir }}/docker-compose.yml ps
+      register: wazuh_ps
+      changed_when: false
+
+    - name: Mostrar estado de Wazuh
+      debug:
+        msg: "{{ wazuh_ps.stdout_lines }}"

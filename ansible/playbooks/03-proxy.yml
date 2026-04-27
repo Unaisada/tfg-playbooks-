@@ -1,0 +1,103 @@
+---
+# Playbook: Proxy Squid con filtrado de contenido
+# Uso: ansible-playbook -i inventory/hosts.yml playbooks/03-proxy.yml
+
+- name: Configurar Squid Proxy
+  hosts: proxy_servers
+  become: yes
+
+  vars:
+    red_interna: "10.0.100.0/24"
+    puerto_squid: 3128
+
+  tasks:
+    - name: Instalar Squid
+      apt:
+        name: squid
+        state: present
+
+    - name: Crear archivo de dominios bloqueados
+      copy:
+        dest: /etc/squid/bloqueados.txt
+        content: |
+          .facebook.com
+          .tiktok.com
+          .twitter.com
+          .instagram.com
+          .reddit.com
+          .youtube.com
+
+    - name: Crear archivo de palabras bloqueadas
+      copy:
+        dest: /etc/squid/palabras.txt
+        content: |
+          porn
+          gambling
+          casino
+          torrent
+          pirate
+
+    - name: Configurar Squid
+      copy:
+        dest: /etc/squid/squid.conf
+        content: |
+          # SecureOps — Squid Proxy
+          # Generado automáticamente por Ansible
+
+          # ACLs básicas
+          acl localnet src {{ red_interna }}
+          acl SSL_ports port 443
+          acl Safe_ports port 80 443 21 70 210 1025-65535
+          acl CONNECT method CONNECT
+
+          # ACLs personalizadas
+          acl sitiosbloqueados dstdomain "/etc/squid/bloqueados.txt"
+          acl palabrasbloqueadas url_regex -i "/etc/squid/palabras.txt"
+          acl horario_laboral time MTWHF 08:00-18:00
+
+          # Denegar puertos no seguros primero
+          http_access deny !Safe_ports
+          http_access deny CONNECT !SSL_ports
+
+          # Reglas de filtrado
+          http_access deny sitiosbloqueados
+          http_access deny palabrasbloqueadas
+
+          # Permitir red interna en horario laboral
+          http_access allow localnet horario_laboral
+          http_access allow localhost
+          http_access deny all
+
+          # Puerto
+          http_port {{ puerto_squid }}
+
+          # Logs — importante para el SOC de Hamza
+          access_log /var/log/squid/access.log squid
+          cache_log  /var/log/squid/cache.log
+
+          # Cache
+          cache_dir ufs /var/spool/squid 1000 16 256
+          maximum_object_size 100 MB
+
+          # Cabecera que oculta IP interna al exterior
+          forwarded_for off
+      notify: Reiniciar Squid
+
+    - name: Permitir Squid en UFW
+      ufw:
+        rule: allow
+        port: "{{ puerto_squid | string }}"
+        proto: tcp
+
+    - name: Asegurar que Squid esté arrancado
+      service:
+        name: squid
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Reiniciar Squid
+      service:
+        name: squid
+        state: restarted
+        enabled: yes

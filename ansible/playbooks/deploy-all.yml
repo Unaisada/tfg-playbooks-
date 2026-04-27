@@ -1,0 +1,66 @@
+---
+# ============================================================
+#   PLAYBOOK MAESTRO — SecureOps TFG ASIR2
+#   Despliega TODA la infraestructura con un solo comando
+#
+#   Uso: ansible-playbook -i inventory/hosts.yml playbooks/deploy-all.yml
+#
+#   Este es el playbook que ejecutamos en la DEMO FINAL:
+#   "Un solo comando para desplegar una empresa entera desde cero"
+# ============================================================
+
+- name: "SecureOps — Inicio de despliegue"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Banner de inicio
+      debug:
+        msg:
+          - "================================================="
+          - "  SecureOps — Despliegue completo de empresa"
+          - "  TFG ASIR2 — Unai, Iker, Hamza"
+          - "================================================="
+
+- name: "PASO 1/7 — Configuración base (todas las VMs)"
+  import_playbook: 00-base.yml
+
+- name: "PASO 2/7 — Servidor DNS (BIND9)"
+  import_playbook: 01-dns.yml
+
+- name: "PASO 3/7 — Servidor Web (Nginx)"
+  import_playbook: 02-nginx.yml
+
+- name: "PASO 4/7 — Proxy de contenido (Squid)"
+  import_playbook: 03-proxy.yml
+
+- name: "PASO 5/7 — Docker CE (base para Wazuh y Monitoring)"
+  import_playbook: 04-docker.yml
+
+- name: "PASO 6/7 — Wazuh SIEM (SOC — Hamza)"
+  import_playbook: 05-wazuh.yml
+
+- name: "PASO 7/7 — Grafana + Prometheus + Loki (NOC — Iker)"
+  import_playbook: 06-monitoring.yml
+
+# Suricata se despliega en srv-suricata (también parte de Hamza)
+- name: "PASO 7b — Suricata IDS (SOC — Hamza)"
+  import_playbook: 07-suricata.yml
+
+- name: "SecureOps — Resumen final"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Banner de fin
+      debug:
+        msg:
+          - "================================================="
+          - "  Despliegue completado correctamente"
+          - ""
+          - "  Servicios disponibles:"
+          - "  - DNS:      10.0.100.10:53"
+          - "  - Web:      http://10.0.100.10"
+          - "  - Proxy:    10.0.100.10:3128"
+          - "  - Wazuh:    https://10.0.100.20"
+          - "  - Grafana:  http://10.0.100.30:3000"
+          - "  - Suricata: 10.0.100.40"
+          - "================================================="

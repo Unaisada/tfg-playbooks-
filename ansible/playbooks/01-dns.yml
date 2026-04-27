@@ -1,0 +1,135 @@
+---
+# Playbook: Servidor DNS con BIND9
+# Uso: ansible-playbook -i inventory/hosts.yml playbooks/01-dns.yml
+
+- name: Configurar servidor DNS con BIND9
+  hosts: dns_servers
+  become: yes
+
+  vars:
+    domain: secureops.local
+    dns_ip: 10.0.100.10
+    reverse_zone: "100.0.10"
+    hosts_dns:
+      - { name: "fw-pfsense",    ip: "10.0.100.1"  }
+      - { name: "srv-linux",     ip: "10.0.100.10" }
+      - { name: "srv-wazuh",     ip: "10.0.100.20" }
+      - { name: "srv-monitoring",ip: "10.0.100.30" }
+      - { name: "srv-suricata",  ip: "10.0.100.40" }
+      - { name: "srv-windows",   ip: "10.0.100.50" }
+      - { name: "grafana",       ip: "10.0.100.30" }
+      - { name: "wazuh",         ip: "10.0.100.20" }
+
+  tasks:
+    - name: Instalar BIND9
+      apt:
+        name:
+          - bind9
+          - bind9utils
+          - bind9-doc
+        state: present
+
+    - name: Configurar named.conf.options
+      copy:
+        dest: /etc/bind/named.conf.options
+        content: |
+          options {
+              directory "/var/cache/bind";
+              recursion yes;
+              allow-recursion { 10.0.100.0/24; localhost; };
+              forwarders {
+                  8.8.8.8;
+                  1.1.1.1;
+              };
+              dnssec-validation auto;
+              listen-on { any; };
+              allow-query { any; };
+          };
+      notify: Reiniciar BIND9
+
+    - name: Configurar named.conf.local
+      copy:
+        dest: /etc/bind/named.conf.local
+        content: |
+          zone "{{ domain }}" {
+              type master;
+              file "/etc/bind/db.{{ domain }}";
+          };
+          zone "{{ reverse_zone }}.in-addr.arpa" {
+              type master;
+              file "/etc/bind/db.{{ domain }}.inversa";
+          };
+      notify: Reiniciar BIND9
+
+    - name: Crear zona directa
+      copy:
+        dest: "/etc/bind/db.{{ domain }}"
+        content: |
+          $TTL 604800
+          @   IN  SOA {{ domain }}. admin.{{ domain }}. (
+                      2025042701 ; Serial (YYYYMMDD + revision)
+                         604800  ; Refresh
+                          86400  ; Retry
+                        2419200  ; Expire
+                         604800) ; Negative Cache TTL
+          ;
+          @   IN  NS  srv-linux.{{ domain }}.
+          @   IN  A   {{ dns_ip }}
+          ;
+          {% for host in hosts_dns %}
+          {{ host.name }}  IN  A  {{ host.ip }}
+          {% endfor %}
+      notify: Reiniciar BIND9
+
+    - name: Crear zona inversa
+      copy:
+        dest: "/etc/bind/db.{{ domain }}.inversa"
+        content: |
+          $TTL 604800
+          @   IN  SOA {{ domain }}. admin.{{ domain }}. (
+                      2025042701 ; Serial
+                         604800  ; Refresh
+                          86400  ; Retry
+                        2419200  ; Expire
+                         604800) ; Negative Cache TTL
+          ;
+          @   IN  NS  srv-linux.{{ domain }}.
+          ;
+          {% for host in hosts_dns %}
+          {{ host.ip.split('.')[-1] }}  IN  PTR  {{ host.name }}.{{ domain }}.
+          {% endfor %}
+      notify: Reiniciar BIND9
+
+    - name: Verificar sintaxis de zona
+      command: named-checkzone {{ domain }} /etc/bind/db.{{ domain }}
+      changed_when: false
+      register: zone_check
+
+    - name: Mostrar resultado de verificación
+      debug:
+        msg: "{{ zone_check.stdout }}"
+
+    - name: Configurar resolv.conf
+      copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver {{ dns_ip }}
+          nameserver 8.8.8.8
+          search {{ domain }}
+
+    - name: Evitar que cloud-init sobreescriba resolv.conf
+      copy:
+        dest: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+        content: "network: {config: disabled}\n"
+
+    - name: Permitir DNS en UFW (TCP y UDP)
+      ufw:
+        rule: allow
+        port: '53'
+
+  handlers:
+    - name: Reiniciar BIND9
+      service:
+        name: bind9
+        state: restarted
+        enabled: yes
