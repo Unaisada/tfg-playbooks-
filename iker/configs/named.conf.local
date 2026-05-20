@@ -1,0 +1,9 @@
+zone "secureops.local" {
+    type master;
+    file "/etc/bind/db.secureops.local";
+};
+
+zone "100.0.10.in-addr.arpa" {
+    type master;
+    file "/etc/bind/db.secureops.local.inversa";
+};
