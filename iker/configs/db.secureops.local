@@ -1,0 +1,22 @@
+$TTL 604800
+@ IN SOA secureops.local. admin.secureops.local. (
+    2025022401 ; Serial
+    604800     ; Refresh
+    86400      ; Retry
+    2419200    ; Expire
+    604800 )   ; Negative Cache TTL
+
+@ IN NS srv-linux.secureops.local.
+@ IN A 10.0.100.10
+
+srv-linux    IN A 10.0.100.10
+srv-wazuh    IN A 10.0.100.20
+srv-monitoring IN A 10.0.100.30
+srv-suricata IN A 10.0.100.40
+srv-windows  IN A 10.0.100.50
+fw-pfsense   IN A 10.0.100.1
+
+grafana  IN CNAME srv-monitoring.secureops.local.
+wazuh    IN CNAME srv-wazuh.secureops.local.
+web      IN CNAME srv-linux.secureops.local.
+proxy    IN CNAME srv-linux.secureops.local.
