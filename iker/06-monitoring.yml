@@ -1,0 +1,417 @@
+---
+# Playbook: Despliegue del stack de Monitorización (NOC)
+# Autor: Iker — TFG SecureOps ASIR2 2025
+# Ejecutar: ansible-playbook -i inventory/hosts.yml playbooks/06-monitoring.yml
+#
+# Despliega en srv-monitoring (10.0.100.30):
+#   - Docker + Docker Compose
+#   - Prometheus (métricas)
+#   - Grafana (dashboards)
+#   - Loki (logs)
+#   - Promtail (recolector de logs)
+#   - Node Exporter (métricas del host)
+#   - Uptime Kuma (estado de servicios)
+#
+# También instala Node Exporter en todos los servidores Linux.
+
+- name: "Instalar Node Exporter en todos los servidores Linux"
+  hosts: linux_servers
+  become: yes
+  vars:
+    node_exporter_version: "1.7.0"
+
+  tasks:
+    - name: Descargar Node Exporter
+      get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+
+    - name: Extraer Node Exporter
+      unarchive:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: /tmp/
+        remote_src: yes
+
+    - name: Copiar binario de Node Exporter
+      copy:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+        dest: /usr/local/bin/node_exporter
+        mode: '0755'
+        remote_src: yes
+
+    - name: Crear servicio systemd para Node Exporter
+      copy:
+        dest: /etc/systemd/system/node_exporter.service
+        content: |
+          [Unit]
+          Description=Node Exporter
+          After=network.target
+
+          [Service]
+          User=nobody
+          ExecStart=/usr/local/bin/node_exporter
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Habilitar y arrancar Node Exporter
+      systemd:
+        name: node_exporter
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    - name: Permitir Node Exporter en UFW
+      ufw:
+        rule: allow
+        port: '9100'
+        proto: tcp
+
+    - name: Verificar Node Exporter
+      uri:
+        url: http://localhost:9100/metrics
+        status_code: 200
+      register: result
+      retries: 3
+      delay: 5
+
+
+- name: "Desplegar stack de Monitorización en srv-monitoring"
+  hosts: monitoring_servers
+  become: yes
+
+  vars:
+    monitoring_dir: /home/admin/monitoring
+
+  tasks:
+
+    # ========================
+    # DOCKER
+    # ========================
+    - name: Instalar dependencias de Docker
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+        update_cache: yes
+
+    - name: Añadir clave GPG de Docker
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Añadir repositorio de Docker
+      apt_repository:
+        repo: "deb https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Instalar Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Añadir usuario admin al grupo docker
+      user:
+        name: admin
+        groups: docker
+        append: yes
+
+    - name: Habilitar y arrancar Docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    # ========================
+    # ESTRUCTURA DE CARPETAS
+    # ========================
+    - name: Crear estructura de carpetas del stack
+      file:
+        path: "{{ monitoring_dir }}/{{ item }}"
+        state: directory
+        owner: admin
+        group: admin
+        mode: '0755'
+      loop:
+        - prometheus
+        - grafana/provisioning/datasources
+        - loki
+        - promtail
+
+    # ========================
+    # CONFIGURACIONES
+    # ========================
+    - name: Copiar docker-compose.yml
+      copy:
+        dest: "{{ monitoring_dir }}/docker-compose.yml"
+        owner: admin
+        group: admin
+        content: |
+          version: '3.8'
+
+          networks:
+            monitoring:
+              driver: bridge
+
+          volumes:
+            prometheus_data:
+            grafana_data:
+            loki_data:
+
+          services:
+            prometheus:
+              image: prom/prometheus:latest
+              container_name: prometheus
+              restart: unless-stopped
+              ports:
+                - "9090:9090"
+              volumes:
+                - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+                - prometheus_data:/prometheus
+              command:
+                - '--config.file=/etc/prometheus/prometheus.yml'
+                - '--storage.tsdb.retention.time=30d'
+              networks:
+                - monitoring
+
+            grafana:
+              image: grafana/grafana:latest
+              container_name: grafana
+              restart: unless-stopped
+              ports:
+                - "3000:3000"
+              environment:
+                - GF_SECURITY_ADMIN_USER=admin
+                - GF_SECURITY_ADMIN_PASSWORD=SecureOps2025!
+                - GF_USERS_ALLOW_SIGN_UP=false
+              volumes:
+                - grafana_data:/var/lib/grafana
+                - ./grafana/provisioning:/etc/grafana/provisioning
+              networks:
+                - monitoring
+
+            loki:
+              image: grafana/loki:latest
+              container_name: loki
+              restart: unless-stopped
+              ports:
+                - "3100:3100"
+              volumes:
+                - ./loki/loki-config.yml:/etc/loki/local-config.yaml
+                - loki_data:/loki
+              command: -config.file=/etc/loki/local-config.yaml
+              networks:
+                - monitoring
+
+            promtail:
+              image: grafana/promtail:latest
+              container_name: promtail
+              restart: unless-stopped
+              volumes:
+                - ./promtail/promtail-config.yml:/etc/promtail/config.yml
+                - /var/log:/var/log:ro
+              command: -config.file=/etc/promtail/config.yml
+              networks:
+                - monitoring
+
+            node-exporter:
+              image: prom/node-exporter:latest
+              container_name: node-exporter
+              restart: unless-stopped
+              ports:
+                - "9100:9100"
+              volumes:
+                - /proc:/host/proc:ro
+                - /sys:/host/sys:ro
+                - /:/rootfs:ro
+              command:
+                - '--path.procfs=/host/proc'
+                - '--path.sysfs=/host/sys'
+                - '--path.rootfs=/rootfs'
+              networks:
+                - monitoring
+
+            uptime-kuma:
+              image: louislam/uptime-kuma:latest
+              container_name: uptime-kuma
+              restart: unless-stopped
+              ports:
+                - "3001:3001"
+              volumes:
+                - ./uptime-kuma:/app/data
+              networks:
+                - monitoring
+
+    - name: Copiar configuración de Prometheus
+      copy:
+        dest: "{{ monitoring_dir }}/prometheus/prometheus.yml"
+        owner: admin
+        group: admin
+        content: |
+          global:
+            scrape_interval: 15s
+            evaluation_interval: 15s
+
+          scrape_configs:
+            - job_name: 'prometheus'
+              static_configs:
+                - targets: ['localhost:9090']
+
+            - job_name: 'node-exporter-local'
+              static_configs:
+                - targets: ['node-exporter:9100']
+                  labels:
+                    instance: 'srv-monitoring'
+
+            - job_name: 'node-exporters'
+              static_configs:
+                - targets: ['10.0.100.10:9100']
+                  labels:
+                    instance: 'srv-linux'
+                - targets: ['10.0.100.20:9100']
+                  labels:
+                    instance: 'srv-wazuh'
+                - targets: ['10.0.100.40:9100']
+                  labels:
+                    instance: 'srv-suricata'
+
+            - job_name: 'nginx'
+              static_configs:
+                - targets: ['10.0.100.10:9113']
+                  labels:
+                    instance: 'srv-linux'
+
+    - name: Copiar configuración de Loki
+      copy:
+        dest: "{{ monitoring_dir }}/loki/loki-config.yml"
+        owner: admin
+        group: admin
+        content: |
+          auth_enabled: false
+
+          server:
+            http_listen_port: 3100
+
+          common:
+            path_prefix: /loki
+            storage:
+              filesystem:
+                chunks_directory: /loki/chunks
+                rules_directory: /loki/rules
+            replication_factor: 1
+            ring:
+              kvstore:
+                store: inmemory
+
+          schema_config:
+            configs:
+              - from: 2020-10-24
+                store: tsdb
+                object_store: filesystem
+                schema: v13
+                index:
+                  prefix: index_
+                  period: 24h
+
+          limits_config:
+            reject_old_samples: true
+            reject_old_samples_max_age: 168h
+
+    - name: Copiar configuración de Promtail
+      copy:
+        dest: "{{ monitoring_dir }}/promtail/promtail-config.yml"
+        owner: admin
+        group: admin
+        content: |
+          server:
+            http_listen_port: 9080
+            grpc_listen_port: 0
+
+          positions:
+            filename: /tmp/positions.yaml
+
+          clients:
+            - url: http://loki:3100/loki/api/v1/push
+
+          scrape_configs:
+            - job_name: system
+              static_configs:
+                - targets:
+                    - localhost
+                  labels:
+                    job: varlogs
+                    __path__: /var/log/*.log
+
+            - job_name: syslog
+              static_configs:
+                - targets:
+                    - localhost
+                  labels:
+                    job: syslog
+                    __path__: /var/log/syslog
+
+    - name: Copiar datasources de Grafana
+      copy:
+        dest: "{{ monitoring_dir }}/grafana/provisioning/datasources/datasources.yml"
+        owner: admin
+        group: admin
+        content: |
+          apiVersion: 1
+
+          datasources:
+            - name: Prometheus
+              type: prometheus
+              access: proxy
+              url: http://prometheus:9090
+              isDefault: true
+              editable: true
+
+            - name: Loki
+              type: loki
+              access: proxy
+              url: http://loki:3100
+              editable: true
+
+    # ========================
+    # PUERTOS EN UFW
+    # ========================
+    - name: Permitir puertos del stack en UFW
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - '3000'   # Grafana
+        - '3001'   # Uptime Kuma
+        - '3100'   # Loki
+        - '9090'   # Prometheus
+        - '9100'   # Node Exporter
+
+    # ========================
+    # ARRANCAR EL STACK
+    # ========================
+    - name: Arrancar el stack de monitorización
+      community.docker.docker_compose_v2:
+        project_src: "{{ monitoring_dir }}"
+        state: present
+      become_user: admin
+
+    - name: Verificar que todos los contenedores están corriendo
+      command: docker compose ps
+      args:
+        chdir: "{{ monitoring_dir }}"
+      register: compose_status
+      changed_when: false
+
+    - name: Mostrar estado de los contenedores
+      debug:
+        msg: "{{ compose_status.stdout }}
