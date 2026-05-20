@@ -1,0 +1,32 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'node-exporter-local'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          instance: 'srv-monitoring'
+
+  - job_name: 'node-exporters'
+    static_configs:
+      - targets: ['10.0.100.10:9100']
+        labels:
+          instance: 'srv-linux'
+      - targets: ['10.0.100.20:9100']
+        labels:
+          instance: 'srv-wazuh'
+      - targets: ['10.0.100.40:9100']
+        labels:
+          instance: 'srv-suricata'
+
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['10.0.100.10:9113']
+        labels:
+          instance: 'srv-linux'
