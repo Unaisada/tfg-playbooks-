@@ -1,0 +1,16 @@
+$TTL 604800
+@ IN SOA secureops.local. admin.secureops.local. (
+    2025022401 ; Serial
+    604800     ; Refresh
+    86400      ; Retry
+    2419200    ; Expire
+    604800 )   ; Negative Cache TTL
+
+@ IN NS srv-linux.secureops.local.
+
+1  IN PTR fw-pfsense.secureops.local.
+10 IN PTR srv-linux.secureops.local.
+20 IN PTR srv-wazuh.secureops.local.
+30 IN PTR srv-monitoring.secureops.local.
+40 IN PTR srv-suricata.secureops.local.
+50 IN PTR srv-windows.secureops.local.
